@@ -1,14 +1,18 @@
 use actix_files::file_extension_to_mime;
-use actix_web::dev::{Response, Server, ServiceFactory};
+use actix_web::dev::Server;
 use actix_web::error::ErrorInternalServerError;
-use actix_web::{
-    get, middleware, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
-};
+use actix_web::{get, middleware, Error, HttpRequest, HttpResponse, Responder};
 use anyhow::Result;
 use include_dir::{include_dir, Dir};
 use log::error;
 use serde_json::json;
 use vite_actix::ViteAppFactory;
+
+use actix_web::{
+    dev::{ServiceFactory, ServiceRequest}, web,
+    App,
+    HttpServer,
+};
 
 // Static directory including all files under `target/wwwroot`.
 // This static directory is used to embed files into the binary at compile time.
@@ -69,12 +73,7 @@ pub trait AssetsAppConfig {
 /// - Debug mode: Uses Vite development server
 impl<T> AssetsAppConfig for App<T>
 where
-    T: ServiceFactory<
-            actix_web::dev::ServiceRequest,
-            Config = (),
-            Error = Error,
-            InitError = (),
-        >,
+    T: ServiceFactory<ServiceRequest, Config = (), Error = Error, InitError = ()>,
 {
     fn configure_routes(self) -> Self {
         if !cfg!(debug_assertions) {
@@ -88,15 +87,63 @@ where
     }
 }
 
-pub fn create_http_server(port: u16) -> Result<Server> {
+/// Creates and configures an HTTP server with customized middleware and JSON handling
+///
+/// # Arguments
+/// * `factory` - A function that configures web service routes and settings
+/// * `port` - The port number on which the server will listen
+///
+/// # Returns
+/// * `Result<Server, std::io::Error>` - Configured server instance if successful, error otherwise
+///
+/// # Type Parameters
+/// * `F` - Factory function type that implements required traits
+/// * `T` - Return type of the factory function
+///
+/// # Example
+/// ```norust
+/// async fn test() -> Result<()> {
+///     // Define a simple handler that returns a static message
+///     async fn hello() -> &'static str {
+///         "Hello, world!"
+///     }
+///     
+///     // Create HTTP server with a route configuration
+///     let server = create_http_server(
+///         |cfg| {
+///             // Configure /api/hello endpoint with GET method
+///             cfg.service(web::scope("/api").route("/hello", web::get().to(hello)));
+///         },
+///         8080,
+///     )?;
+///     
+///     info!("starting server");
+///     
+///     // Start the server and await its completion
+///     server.await?;
+///     
+///     Ok(())
+/// }
+/// ```
+pub fn create_http_server<F, T>(factory: F, port: u16) -> Result<Server, std::io::Error>
+where
+    F: Fn(&mut web::ServiceConfig) -> T + Send + Clone + 'static,
+    T: Send + 'static,
+{
     let server = HttpServer::new(move || {
         App::new()
-            .wrap(middleware::Logger::default()) // Add logger middleware
+            // Add default logging middleware
+            .wrap(middleware::Logger::default())
+            // Configure JSON handling with size limit and custom error handling
             .app_data(
                 web::JsonConfig::default()
-                    .limit(4096) // Set JSON payload size limit
+                    // Set maximum JSON payload size to 4KB
+                    .limit(4096)
+                    // Custom error handler for JSON parsing failures
                     .error_handler(|err, _req| {
+                        // Log the parsing error
                         error!("Failed to parse JSON: {}", err);
+                        // Create error response in JSON format
                         let error = json!({ "error": format!("{}", err) });
                         actix_web::error::InternalError::from_response(
                             err,
@@ -105,10 +152,15 @@ pub fn create_http_server(port: u16) -> Result<Server> {
                         .into()
                     }),
             )
-            .configure_routes()
+            // Apply the provided configuration function
+            .configure(|cfg| {
+                factory(cfg);
+            })
     })
-    .workers(4) // Set number of workers
-    .bind(format!("0.0.0.0:{port}", port = port))? // Bind to specified port
+    // Set number of worker threads
+    .workers(4)
+    // Bind server to all interfaces on specified port
+    .bind(format!("0.0.0.0:{}", port))?
     .run();
     Ok(server)
 }
