@@ -127,6 +127,7 @@ where
                     }),
             )
             .app_data(wwwroot.clone())
+            .configure_routes(wwwroot)
             .configure(|cfg| config_fn(cfg))
     })
     .workers(4)
