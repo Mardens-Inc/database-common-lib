@@ -6,7 +6,6 @@ use anyhow::Result;
 use include_dir::{include_dir, Dir};
 use log::error;
 use serde_json::json;
-use std::sync::Arc;
 use vite_actix::ViteAppFactory;
 
 use actix_web::web::Data;
@@ -126,8 +125,7 @@ where
                         .into()
                     }),
             )
-            .app_data(wwwroot.clone())
-            .configure_routes(wwwroot)
+            .configure_routes(wwwroot.clone())
             .configure(|cfg| config_fn(cfg))
     })
     .workers(4)
