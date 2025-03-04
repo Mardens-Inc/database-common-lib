@@ -3,9 +3,10 @@ use actix_web::dev::Server;
 use actix_web::error::ErrorInternalServerError;
 use actix_web::{get, middleware, Error, HttpRequest, HttpResponse, Responder};
 use anyhow::Result;
-use include_dir::Dir;
+use include_dir::{include_dir, Dir};
 use log::error;
 use serde_json::json;
+use std::sync::Arc;
 use vite_actix::ViteAppFactory;
 
 use actix_web::web::Data;
@@ -134,4 +135,21 @@ where
     .bind(format!("0.0.0.0:{}", port))?
     .run();
     Ok(server)
+}
+
+#[test]
+fn test_create_http_server() {
+    // Create the HTTP server with the factory closure
+    let server_result = create_http_server(
+        |cfg| {
+            cfg.service(web::scope("/api").route(
+                "/hello",
+                web::get().to(Ok(HttpResponse::Ok().body("Hello, world!"))),
+            ))
+        },
+        include_dir!("target/wwwroot"),
+        8080,
+    );
+
+    assert!(server_result.is_ok());
 }
