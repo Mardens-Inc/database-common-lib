@@ -100,17 +100,17 @@ where
 /// # Type Parameters
 /// * `F` - Factory function type that implements required traits
 /// * `T` - Return type of the factory function
-pub fn create_http_server<F, T>(
+pub fn create_http_server<F>(
     factory: F,
     wwwroot: Dir<'static>,
     port: u16,
 ) -> Result<Server, std::io::Error>
 where
-    F: Fn(&mut web::ServiceConfig) -> T + Send + Clone + 'static,
-    T: Send + 'static,
+    F: Fn() -> Box<dyn FnOnce(&mut web::ServiceConfig) + Send + 'static> + Send + Clone + 'static,
 {
     let wwwroot = Data::new(wwwroot);
     let server = HttpServer::new(move || {
+        let config_fn = factory();
         App::new()
             .wrap(middleware::Logger::default())
             .app_data(
@@ -126,10 +126,8 @@ where
                         .into()
                     }),
             )
-            .configure_routes(wwwroot.clone())
-            .configure(|cfg| {
-                factory(cfg);
-            })
+            .app_data(wwwroot.clone())
+            .configure(|cfg| config_fn(cfg))
     })
     .workers(4)
     .bind(format!("0.0.0.0:{}", port))?
@@ -139,15 +137,18 @@ where
 
 #[test]
 fn test_create_http_server() {
+    let wwwroot: Dir = include_dir!("target/wwwroot");
     // Create the HTTP server with the factory closure
     let server_result = create_http_server(
-        |cfg| {
-            cfg.service(web::scope("/api").route(
-                "/hello",
-                web::get().to(Ok(HttpResponse::Ok().body("Hello, world!"))),
-            ))
+        || {
+            Box::new(|cfg: &mut web::ServiceConfig| {
+                cfg.service(web::scope("/api").route(
+                    "/hello",
+                    web::get().to(|| async { HttpResponse::Ok().body("Hello, world!") }),
+                ));
+            })
         },
-        include_dir!("target/wwwroot"),
+        wwwroot,
         8080,
     );
 
