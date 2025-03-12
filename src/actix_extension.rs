@@ -125,8 +125,8 @@ where
                         .into()
                     }),
             )
-            .configure_routes(wwwroot.clone())
             .configure(|cfg| config_fn(cfg))
+            .configure_routes(wwwroot.clone())
     })
     .workers(4)
     .bind(format!("0.0.0.0:{}", port))?
