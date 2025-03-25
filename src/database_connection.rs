@@ -67,6 +67,6 @@ pub async fn create_pool(data: &DatabaseConnectionData) -> Result<MySqlPool> {
         "mysql://{}:{}@{}/pricing",
         data.user, data.password, data.host
     ))
-        .await?;
+    .await?;
     Ok(pool)
 }

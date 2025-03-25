@@ -95,5 +95,7 @@ impl From<HttpResponse> for Error {
     }
 }
 
+
+
 // Type alias for Result using custom Error type
 pub type Result<T> = std::result::Result<T, Error>;
