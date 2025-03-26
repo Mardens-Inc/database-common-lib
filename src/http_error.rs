@@ -45,18 +45,41 @@ impl ResponseError for Error {
 
     fn error_response(&self) -> HttpResponse {
         let status_code = self.status_code();
-        let error_message = self.to_string();
+
+        // Extract only the error message without the backtrace
+        let full_error = self.to_string();
+        let error_message = match full_error.split("\n\nStack backtrace:").next() {
+            Some(message) => message.trim(),
+            None => &full_error, // Fallback to the full error if split fails
+        };
+
+        // For Anyhow errors, clean up the message
+        let error_message = match self {
+            Error::Anyhow(_) => {
+                if let Some(msg) = error_message.strip_prefix("an error has occurred: ") {
+                    msg
+                } else {
+                    error_message
+                }
+            }
+            _ => error_message,
+        };
 
         #[cfg(debug_assertions)]
         {
-            // For development - include stacktrace
-            let backtrace = std::backtrace::Backtrace::capture().to_string();
+            // Capture backtrace
+            let backtrace = std::backtrace::Backtrace::capture();
+            let backtrace_str = backtrace.to_string();
+
+            // Parse backtrace into a structured format
+            let frames = parse_backtrace(&backtrace_str);
+
             return HttpResponse::build(status_code)
                 .content_type("application/json")
                 .json(json!({
                     "message": error_message,
                     "status": status_code.as_u16(),
-                    "stacktrace": backtrace
+                    "stacktrace": frames
                 }));
         }
 
@@ -120,3 +143,33 @@ impl From<HttpResponse> for Error {
 
 // Type alias for Result using custom Error type
 pub type Result<T> = std::result::Result<T, Error>;
+// Helper function to parse backtrace into structured data
+fn parse_backtrace(backtrace_str: &str) -> Vec<serde_json::Value> {
+    let mut frames = Vec::new();
+
+    // Skip the header lines and process each frame
+    for line in backtrace_str
+        .lines()
+        .skip_while(|l| !l.trim().starts_with('0'))
+    {
+        // Check if this line contains a frame (starts with a number followed by colon)
+        if let Some(frame_line) = line
+            .trim()
+            .strip_prefix(|c: char| c.is_digit(10) || c == ':')
+        {
+            let parts: Vec<&str> = frame_line.splitn(2, " at ").collect();
+
+            if parts.len() == 2 {
+                let function = parts[0].trim();
+                let location = parts[1].trim();
+
+                frames.push(json!({
+                    "function": function,
+                    "location": location
+                }));
+            }
+        }
+    }
+
+    frames
+}
