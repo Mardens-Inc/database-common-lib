@@ -3,19 +3,22 @@ use actix_web::http::header::ToStrError;
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
 use anyhow::anyhow;
+use serde_json::json;
 
 /// Custom error types for handling various error scenarios in the application
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     // Represents unspecified internal errors
     #[allow(dead_code)]
-    #[error("an unspecified internal error occurred: * `lib.rs` sibling file text :*:
+    #[error(
+        "an unspecified internal error occurred: * `lib.rs` sibling file text :*:
 ```rust
 pub mod asset_endpoint;
 pub mod data_database_connection;
 pub mod http_error;
 
-```")]
+```"
+    )]
     InternalError(anyhow::Error),
 
     // Generic error type for miscellaneous errors
@@ -32,21 +35,41 @@ pub mod http_error;
     HeaderParse(ToStrError),
 }
 
-/// Implementation of ResponseError trait for custom Error enum
 impl ResponseError for Error {
-    /// Determines the appropriate HTTP status code based on the error type
     fn status_code(&self) -> StatusCode {
         match &self {
-            // Return 500 Internal Server Error for internal errors
             Self::InternalError(_) | Self::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            // Return 400 Bad Request for all other error types
             _ => StatusCode::BAD_REQUEST,
         }
     }
 
-    /// Converts the error into an HTTP response
     fn error_response(&self) -> HttpResponse {
-        HttpResponse::build(self.status_code()).body(self.to_string())
+        let status_code = self.status_code();
+        let error_message = self.to_string();
+
+        #[cfg(debug_assertions)]
+        {
+            // For development - include stacktrace
+            let backtrace = std::backtrace::Backtrace::capture().to_string();
+            return HttpResponse::build(status_code)
+                .content_type("application/json")
+                .json(json!({
+                    "message": error_message,
+                    "status": status_code.as_u16(),
+                    "stacktrace": backtrace
+                }));
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            // For production - no stacktrace
+            HttpResponse::build(status_code)
+                .content_type("application/json")
+                .json(json!({
+                    "message": error_message,
+                    "status": status_code.as_u16()
+                }))
+        }
     }
 }
 
@@ -94,8 +117,6 @@ impl From<HttpResponse> for Error {
         ))
     }
 }
-
-
 
 // Type alias for Result using custom Error type
 pub type Result<T> = std::result::Result<T, Error>;
