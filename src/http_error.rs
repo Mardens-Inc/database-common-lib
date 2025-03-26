@@ -4,6 +4,7 @@ use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
 use anyhow::anyhow;
 use serde_json::json;
+use std::path::Path;
 
 /// Custom error types for handling various error scenarios in the application
 #[derive(thiserror::Error, Debug)]
@@ -143,33 +144,66 @@ impl From<HttpResponse> for Error {
 
 // Type alias for Result using custom Error type
 pub type Result<T> = std::result::Result<T, Error>;
-// Helper function to parse backtrace into structured data
+
+/// Helper to parse the backtrace into structured JSON data
 fn parse_backtrace(backtrace_str: &str) -> Vec<serde_json::Value> {
+    let lines: Vec<&str> = backtrace_str.lines().collect();
+    let mut idx = 0;
     let mut frames = Vec::new();
 
-    // Skip the header lines and process each frame
-    for line in backtrace_str
-        .lines()
-        .skip_while(|l| !l.trim().starts_with('0'))
-    {
-        // Check if this line contains a frame (starts with a number followed by colon)
-        if let Some(frame_line) = line
-            .trim()
-            .strip_prefix(|c: char| c.is_digit(10) || c == ':')
-        {
-            let parts: Vec<&str> = frame_line.splitn(2, " at ").collect();
+    while idx < lines.len() {
+        let line = lines[idx].trim_start();
 
-            if parts.len() == 2 {
-                let function = parts[0].trim();
-                let location = parts[1].trim();
+        // Match lines that start with frame number ("0:", "1:", ...)
+        if let Some(colon_pos) = line.find(':') {
+            let (frame_number, rest) = line.split_at(colon_pos);
+            if frame_number.trim().chars().all(char::is_numeric) {
+                let function_name = rest[1..].trim();
 
-                frames.push(json!({
-                    "function": function,
-                    "location": location
-                }));
+                // Get next line for location information
+                idx += 1;
+                if idx < lines.len() {
+                    let location_line = lines[idx].trim().strip_prefix("at ").unwrap_or("");
+
+                    let (path_only, line_number) = extract_line_number(location_line);
+
+                    let absolute_path = absolute_path(path_only);
+
+                    frames.push(json!({
+                        "file": absolute_path,
+                        "function": function_name,
+                        "line": line_number,
+                    }));
+                }
             }
         }
+        idx += 1;
     }
 
     frames
+}
+
+/// Extract file path and line number from string
+fn extract_line_number(location: &str) -> (String, i32) {
+    if let Some((path, line_number_str)) = location.rsplit_once(':') {
+        if let Ok(line_number) = line_number_str.parse::<i32>() {
+            return (path.to_string(), line_number);
+        }
+    }
+    (location.to_string(), -1)
+}
+
+/// Convert path to absolute path
+fn absolute_path(path: String) -> String {
+    if path.starts_with(".") {
+        // Handle relative path starting from current directory
+        std::env::current_dir()
+            .map(|p| p.join(path).canonicalize().unwrap_or_default())
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+    } else {
+        // Path is already absolute; just clean it up
+        Path::new(&path).to_path_buf().to_string_lossy().to_string()
+    }
 }
