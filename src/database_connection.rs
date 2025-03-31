@@ -77,6 +77,6 @@ pub async fn create_pool(data: &DatabaseConnectionData) -> Result<MySqlPool> {
 #[macro_export]
 macro_rules! set_database_name {
     ($db:expr) => {
-        std::env::set_var("DATABASE", $db);
+        unsafe { std::env::set_var("DATABASE", $db) };
     };
 }
