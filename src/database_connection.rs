@@ -2,6 +2,7 @@ use anyhow::Result;
 use log::debug;
 use serde::Deserialize;
 use sqlx::MySqlPool;
+use std::env;
 
 /// Represents the database connection configuration data
 /// Contains credentials and connection details for both MySQL and Filemaker databases
@@ -62,11 +63,20 @@ impl DatabaseConnectionData {
 /// * When connection to MySQL fails
 pub async fn create_pool(data: &DatabaseConnectionData) -> Result<MySqlPool> {
     debug!("Creating MySQL production connection");
+    let db = std::env::var("DATABASE")
+        .map_err(|_| anyhow::anyhow!("DATABASE environment variable not set"))?;
     // Construct MySQL connection string and establish connection
     let pool = MySqlPool::connect(&format!(
-        "mysql://{}:{}@{}/pricing",
-        data.user, data.password, data.host
+        "mysql://{}:{}@{}/{}",
+        data.user, data.password, data.host, db
     ))
     .await?;
     Ok(pool)
+}
+
+#[macro_export]
+macro_rules! set_database_name {
+    ($db:expr) => {
+        std::env::set_var("DATABASE", $db);
+    };
 }
