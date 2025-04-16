@@ -46,7 +46,7 @@ pub async fn index(
 ///
 /// # Returns
 ///
-/// * `Ok(HttpResponse)` - Response containing the requested asset with appropriate MIME type
+/// * `Ok(HttpResponse)` - Response containing the requested asset with the appropriate MIME type
 /// * `Err(Error)` - Internal server error if the file is not found
 #[get("")]
 async fn assets(wwwroot: Data<Dir<'static>>, file: web::Path<String>) -> impl Responder {
@@ -91,7 +91,7 @@ where
 /// # Arguments
 /// * `factory` - A function that configures web service routes and settings
 /// * `wwwroot` - Embedded static directory containing the files
-/// * `port` - The port number on which the server will listen
+/// * `port` - The port number on which the server will listen to
 ///
 /// # Returns
 /// * `Result<Server, std::io::Error>` - Configured server instance if successful, error otherwise
@@ -99,6 +99,32 @@ where
 /// # Type Parameters
 /// * `F` - Factory function type that implements required traits
 /// * `T` - Return type of the factory function
+/// ```rust
+/// use database_common_lib::actix_extension::create_http_server;
+/// use actix_web::web;
+/// use include_dir::include_dir;
+/// use anyhow::Result;
+/// fn main()->Result<()>{
+/// let server = create_http_server(
+///        move || {
+///            Box::new(move |cfg| {
+///                cfg.service(
+///                    // Register a scope with multiple routes
+///                    web::scope("/api")
+///                        .route("/hello", web::get().to(...))
+///                        .route("/echo/{message}", web::get().to(...))
+///                        .route("/health", web::get().to(...))
+///                        .route("/error", web::get().to(...)),
+///                );
+///            })
+///        },
+///        include_dir!("target/wwwroot"),
+///        8080, // Port number
+///    )?;
+///
+///    Ok(())
+/// }
+/// ```
 pub fn create_http_server<F>(
     factory: F,
     wwwroot: Dir<'static>,
