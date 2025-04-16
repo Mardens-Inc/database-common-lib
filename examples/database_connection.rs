@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
 	// Load database configuration from remote JSON endpoint
     let db_config = DatabaseConnectionData::get().await?;
 
-    // Create MySQL connection pool
+    // Create a MySQL connection pool
     let pool = create_pool(&db_config).await?;
 
     // Wrap the pool in web::Data for sharing across handlers
