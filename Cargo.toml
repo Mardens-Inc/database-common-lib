@@ -8,7 +8,7 @@ thiserror = ">=2"
 anyhow = ">=1.0.8"
 actix-web = ">=4.9.0"
 actix-files = ">=0.6.6"
-vite-actix = ">=0.1.2"
+vite-actix = { git = "https://github.com/Drew-Chase/vite-actix.git" }
 sqlx = { version = ">=0.8", features = ["mysql"] }
 reqwest = { version = ">=0.12", features = ["json"] }
 log = ">=0.4"

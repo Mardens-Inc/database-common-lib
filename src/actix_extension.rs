@@ -1,19 +1,18 @@
 use actix_files::file_extension_to_mime;
 use actix_web::dev::Server;
 use actix_web::error::ErrorInternalServerError;
-use actix_web::{get, middleware, Error, HttpRequest, HttpResponse, Responder};
-use anyhow::Result;
-use include_dir::{include_dir, Dir};
-use log::error;
-use serde_json::json;
-use vite_actix::ViteAppFactory;
-
 use actix_web::web::Data;
 use actix_web::{
     dev::{ServiceFactory, ServiceRequest}, web,
     App,
     HttpServer,
 };
+use actix_web::{get, middleware, Error, HttpRequest, HttpResponse, Responder};
+use anyhow::Result;
+use include_dir::{include_dir, Dir};
+use log::error;
+use serde_json::json;
+use vite_actix::vite_app_factory::ViteAppFactory;
 
 /// Serves the index.html file from the embedded static directory.
 ///
