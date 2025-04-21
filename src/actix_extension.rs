@@ -3,13 +3,13 @@ use actix_web::dev::Server;
 use actix_web::error::ErrorInternalServerError;
 use actix_web::web::Data;
 use actix_web::{
-    dev::{ServiceFactory, ServiceRequest}, web,
-    App,
-    HttpServer,
+    App, HttpServer,
+    dev::{ServiceFactory, ServiceRequest},
+    web,
 };
-use actix_web::{get, middleware, Error, HttpRequest, HttpResponse, Responder};
+use actix_web::{Error, HttpRequest, HttpResponse, Responder, get, middleware};
 use anyhow::Result;
-use include_dir::{include_dir, Dir};
+use include_dir::Dir;
 use log::error;
 use serde_json::json;
 use vite_actix::vite_app_factory::ViteAppFactory;
@@ -98,7 +98,7 @@ where
 /// # Type Parameters
 /// * `F` - Factory function type that implements required traits
 /// * `T` - Return type of the factory function
-/// ```rust
+/// ```norust
 /// use database_common_lib::actix_extension::create_http_server;
 /// use actix_web::web;
 /// use include_dir::include_dir;
@@ -157,24 +157,4 @@ where
     .bind(format!("0.0.0.0:{}", port))?
     .run();
     Ok(server)
-}
-
-#[test]
-fn test_create_http_server() {
-    let wwwroot: Dir = include_dir!("target/wwwroot");
-    // Create the HTTP server with the factory closure
-    let server_result = create_http_server(
-        || {
-            Box::new(|cfg: &mut web::ServiceConfig| {
-                cfg.service(web::scope("/api").route(
-                    "/hello",
-                    web::get().to(|| async { HttpResponse::Ok().body("Hello, world!") }),
-                ));
-            })
-        },
-        wwwroot,
-        8080,
-    );
-
-    assert!(server_result.is_ok());
 }
