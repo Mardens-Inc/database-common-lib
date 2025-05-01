@@ -1,9 +1,9 @@
-use actix_web::{web, App, HttpResponse, Responder};
+use actix_web::{App, HttpResponse, Responder, web};
 use anyhow::Result;
+use database_common_lib::database_connection::set_database_name;
 use database_common_lib::{
-	actix_extension::create_http_server,
-	database_connection::{create_pool, DatabaseConnectionData},
-	set_database_name,
+    actix_extension::create_http_server,
+    database_connection::{DatabaseConnectionData, create_pool},
 };
 use include_dir::include_dir;
 use sqlx::MySqlPool;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 // Handler that uses database connection
 async fn get_users(db_pool: web::Data<MySqlPool>) -> impl Responder {
     // Example query using the database pool
-    match sqlx::query!("SELECT id, name FROM users LIMIT 10")
+    match sqlx::query("SELECT id, name FROM users LIMIT 10")
         .fetch_all(db_pool.get_ref())
         .await
     {
@@ -20,7 +20,7 @@ async fn get_users(db_pool: web::Data<MySqlPool>) -> impl Responder {
             // Convert the users to a format that can be returned as JSON
             let user_list: Vec<_> = users
                 .into_iter()
-                .map(|user| serde_json::json!({ "id": user.id, "name": user.name }))
+                .map(|user| serde_json::json!({ "id": user, "name": user.name }))
                 .collect();
 
             HttpResponse::Ok().json(user_list)
@@ -51,8 +51,8 @@ async fn health_check(db_pool: web::Data<MySqlPool>) -> impl Responder {
 #[tokio::main]
 async fn main() -> Result<()> {
     // This sets the database name used for the connection.
-    set_database_name!("pricing");
-	// Load database configuration from remote JSON endpoint
+    set_database_name("pricing")?;
+    // Load database configuration from remote JSON endpoint
     let db_config = DatabaseConnectionData::get().await?;
 
     // Create a MySQL connection pool

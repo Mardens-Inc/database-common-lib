@@ -5,11 +5,11 @@ use actix_web::error::ErrorInternalServerError;
 use actix_web::http::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN};
 use actix_web::web::Data;
 use actix_web::{
-    dev::{ServiceFactory, ServiceRequest}, web,
-    App,
-    HttpServer,
+    App, HttpServer,
+    dev::{ServiceFactory, ServiceRequest},
+    web,
 };
-use actix_web::{get, middleware, Error, HttpRequest, HttpResponse, Responder};
+use actix_web::{Error, HttpRequest, HttpResponse, Responder, get, middleware};
 use anyhow::Result;
 use include_dir::Dir;
 use log::error;
