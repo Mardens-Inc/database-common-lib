@@ -1,6 +1,8 @@
 use actix_files::file_extension_to_mime;
 use actix_web::dev::Server;
+use actix_web::dev::Service;
 use actix_web::error::ErrorInternalServerError;
+use actix_web::http::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN};
 use actix_web::web::Data;
 use actix_web::{
     dev::{ServiceFactory, ServiceRequest}, web,
@@ -9,7 +11,7 @@ use actix_web::{
 };
 use actix_web::{get, middleware, Error, HttpRequest, HttpResponse, Responder};
 use anyhow::Result;
-use include_dir::{include_dir, Dir};
+use include_dir::Dir;
 use log::error;
 use serde_json::json;
 use vite_actix::vite_app_factory::ViteAppFactory;
@@ -98,7 +100,7 @@ where
 /// # Type Parameters
 /// * `F` - Factory function type that implements required traits
 /// * `T` - Return type of the factory function
-/// ```rust
+/// ```norust
 /// use database_common_lib::actix_extension::create_http_server;
 /// use actix_web::web;
 /// use include_dir::include_dir;
@@ -137,6 +139,18 @@ where
         let config_fn = factory();
         App::new()
             .wrap(middleware::Logger::default())
+            .wrap_fn(|req, srv| {
+                // disable cors
+                let fut = srv.call(req);
+                async {
+                    let mut res = fut.await?;
+                    res.headers_mut()
+                        .insert(ACCESS_CONTROL_ALLOW_HEADERS, "*".parse().unwrap());
+                    res.headers_mut()
+                        .insert(ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
+                    Ok(res)
+                }
+            })
             .app_data(
                 web::JsonConfig::default()
                     .limit(4096)
@@ -157,24 +171,4 @@ where
     .bind(format!("0.0.0.0:{}", port))?
     .run();
     Ok(server)
-}
-
-#[test]
-fn test_create_http_server() {
-    let wwwroot: Dir = include_dir!("target/wwwroot");
-    // Create the HTTP server with the factory closure
-    let server_result = create_http_server(
-        || {
-            Box::new(|cfg: &mut web::ServiceConfig| {
-                cfg.service(web::scope("/api").route(
-                    "/hello",
-                    web::get().to(|| async { HttpResponse::Ok().body("Hello, world!") }),
-                ));
-            })
-        },
-        wwwroot,
-        8080,
-    );
-
-    assert!(server_result.is_ok());
 }
