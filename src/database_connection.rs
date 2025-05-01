@@ -1,6 +1,6 @@
 use anyhow::Result;
 use log::debug;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 use std::sync::{Mutex, OnceLock};
 
@@ -8,7 +8,7 @@ static DATABASE_NAME: OnceLock<Mutex<String>> = OnceLock::new();
 
 /// Represents the database connection configuration data
 /// Contains credentials and connection details for both MySQL and Filemaker databases
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct DatabaseConnectionData {
     /// MySQL host address
     pub host: String,
@@ -23,7 +23,7 @@ pub struct DatabaseConnectionData {
 }
 
 /// Stores Filemaker database authentication credentials
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct FilemakerCredentials {
     /// Filemaker username
     pub username: String,
@@ -42,51 +42,20 @@ impl DatabaseConnectionData {
     /// * When JSON parsing fails
     pub async fn get() -> Result<Self> {
         if cfg!(debug_assertions) {
-            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-                .unwrap_or_else(|_| ".".to_string());
-            let cargo_path = std::path::Path::new(&manifest_dir).join("Cargo.toml");
-            let cargo_toml = std::fs::read_to_string(cargo_path)?;
-            let cargo_data = toml::from_str::<toml::Table>(&cargo_toml)?;
-            let dev_config = cargo_data.get("dev-dbserver").ok_or_else(|| {
-                anyhow::anyhow!(
-                    r#"
-                        Missing [dev-dbserver] section
-                        Add the following to your Cargo.toml:
-                        [dev-dbserver]
-                        host = ""
-                        user = ""
-                        password = ""
-                        hash = ""
-                    "#
-                )
-            })?;
-            let data = DatabaseConnectionData {
-                host: dev_config
-                    .get("host")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                user: dev_config
-                    .get("user")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                password: dev_config
-                    .get("password")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                hash: dev_config
-                    .get("hash")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                filemaker: FilemakerCredentials {
-                    username: String::new(),
-                    password: String::new(),
-                },
-            };
-            Ok(data)
+            let manifest_dir =
+                std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+            let config_path = std::path::Path::new(&manifest_dir).join("dev-server.json");
+            if !config_path.exists() {
+                let default_config: DatabaseConnectionData = DatabaseConnectionData::default();
+                let json = serde_json::to_string(&default_config);
+                if let Ok(json) = json {
+                    std::fs::write("dev-server.json", json)?;
+                }
+                return Err(anyhow::anyhow!("Configuration file not found"));
+            }
+            let config_json = std::fs::read_to_string(config_path)?;
+            let dev_config: DatabaseConnectionData = serde_json::from_str(&config_json)?;
+            Ok(dev_config)
         } else {
             use reqwest::Client;
             // Remote configuration endpoint
