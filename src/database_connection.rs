@@ -1,7 +1,8 @@
 use anyhow::Result;
 use log::debug;
 use serde::{Deserialize, Serialize};
-use sqlx::MySqlPool;
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
+use sqlx::{ConnectOptions, MySqlPool};
 use std::sync::{Mutex, OnceLock};
 
 static DATABASE_NAME: OnceLock<Mutex<String>> = OnceLock::new();
@@ -20,6 +21,8 @@ pub struct DatabaseConnectionData {
     pub filemaker: FilemakerCredentials,
     /// Authentication hash
     pub hash: String,
+    /// MySQL server port
+    pub port: Option<u16>,
 }
 
 /// Stores Filemaker database authentication credentials
@@ -83,12 +86,19 @@ impl DatabaseConnectionData {
 pub async fn create_pool(data: &DatabaseConnectionData) -> Result<MySqlPool> {
     debug!("Creating MySQL production connection");
     let db = get_database_name()?;
+    let mut options = MySqlConnectOptions::new()
+        .log_statements(log::LevelFilter::Trace)
+        .host(&data.host)
+        .username(&data.user)
+        .password(&data.password)
+        .database(&db);
+
+    if let Some(port) = data.port {
+        options = options.port(port);
+    }
+
     // Construct MySQL connection string and establish connection
-    let pool = MySqlPool::connect(&format!(
-        "mysql://{}:{}@{}/{}",
-        data.user, data.password, data.host, db
-    ))
-    .await?;
+    let pool = MySqlPoolOptions::new().connect_with(options).await?;
     Ok(pool)
 }
 
