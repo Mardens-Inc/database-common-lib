@@ -71,6 +71,25 @@ impl DatabaseConnectionData {
             Ok(credentials)
         }
     }
+    /// Asynchronously retrieves a connection pool for the MySQL database.
+    ///
+    /// # Returns
+    /// - `Result<MySqlPool>`: A result containing the `MySqlPool` if successful, or an error if the operation fails.
+    ///
+    /// # Errors
+    /// This function returns an error if the connection pool creation fails.
+    ///
+    /// # Examples
+    /// ```rust
+    /// let pool = my_instance.get_pool().await?;
+    /// ```
+    ///
+    /// # Note
+    /// This function relies on the `create_pool` function, which is expected to handle
+    /// connection pool initialization logic asynchronously.
+    pub async fn get_pool(&self) -> Result<MySqlPool> {
+        create_pool(self).await
+    }
 }
 
 /// Creates a MySQL connection pool using the provided configuration
