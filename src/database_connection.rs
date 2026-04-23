@@ -1,109 +1,177 @@
-use anyhow::Result;
-use log::debug;
+use anyhow::{Result, anyhow};
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use sqlx::{ConnectOptions, MySqlPool};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
-static DATABASE_NAME: OnceLock<Mutex<String>> = OnceLock::new();
+/// Global database name, set once at process start via [`set_database_name`].
+/// `OnceLock<String>` is sufficient here — the value is written once and only
+/// read afterwards, so no additional locking is required.
+static DATABASE_NAME: OnceLock<String> = OnceLock::new();
 
-/// Represents the database connection configuration data
-/// Contains credentials and connection details for both MySQL and Filemaker databases
-#[derive(Serialize, Deserialize, Clone, Default)]
+/// Remote URL used to fetch production configuration when no local env vars
+/// are provided.
+const REMOTE_CONFIG_URL: &str = "https://lib.mardens.com/config.json";
+
+// ---------------------------------------------------------------------------
+// Env var names (all optional). See `DatabaseConnectionData::get` for precedence.
+// ---------------------------------------------------------------------------
+const ENV_HOST: &str = "DB_HOST";
+const ENV_USER: &str = "DB_USER";
+const ENV_PASSWORD: &str = "DB_PASSWORD";
+const ENV_PORT: &str = "DB_PORT";
+const ENV_HASH: &str = "DB_HASH";
+const ENV_FM_USER: &str = "DB_FILEMAKER_USER";
+const ENV_FM_PASSWORD: &str = "DB_FILEMAKER_PASSWORD";
+const ENV_DB_NAME: &str = "DB_NAME";
+
+/// Database connection configuration.
+///
+/// Contains credentials and connection details for both MySQL and the
+/// Filemaker integration.
+#[derive(Serialize, Deserialize, Clone, Default, Debug)]
 pub struct DatabaseConnectionData {
-    /// MySQL host address
+    /// MySQL host address.
     pub host: String,
-    /// MySQL username
+    /// MySQL username.
     pub user: String,
-    /// MySQL password
+    /// MySQL password.
     pub password: String,
-    /// Filemaker database credentials
+    /// Filemaker database credentials.
     pub filemaker: FilemakerCredentials,
-    /// Authentication hash
+    /// Authentication hash.
     pub hash: String,
-    /// MySQL server port
+    /// MySQL server port. `None` lets sqlx use the MySQL default (3306).
     pub port: Option<u16>,
 }
 
-/// Stores Filemaker database authentication credentials
-#[derive(Serialize, Deserialize, Clone, Default)]
+/// Filemaker database authentication credentials.
+#[derive(Serialize, Deserialize, Clone, Default, Debug)]
 pub struct FilemakerCredentials {
-    /// Filemaker username
+    /// Filemaker username.
     pub username: String,
-    /// Filemaker password
+    /// Filemaker password.
     pub password: String,
 }
 
 impl DatabaseConnectionData {
-    /// Retrieves database connection configuration from a remote JSON endpoint
+    /// Loads the database connection configuration.
     ///
-    /// # Returns
-    /// * `Result<Self>` - Database connection configuration if successful, error otherwise
+    /// Resolution order:
+    /// 1. **Base config**
+    ///    - Debug builds: [`DatabaseConnectionData::default`] (empty fields).
+    ///    - Release builds: fetched from [`REMOTE_CONFIG_URL`].
+    /// 2. **Environment overrides** — any of the following variables that are
+    ///    set will replace the corresponding field on the base config:
+    ///    `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_PORT`, `DB_HASH`,
+    ///    `DB_FILEMAKER_USER`, `DB_FILEMAKER_PASSWORD`.
+    /// 3. **Validation** — in debug builds, `host`, `user`, and `password`
+    ///    must be non-empty after env-var overlay; otherwise an error naming
+    ///    the missing variables is returned.
     ///
     /// # Errors
-    /// * When HTTP request fails
-    /// * When JSON parsing fails
+    /// * Remote fetch fails (release only).
+    /// * JSON parsing of the remote response fails (release only).
+    /// * `DB_PORT` is set but cannot be parsed as a `u16`.
+    /// * Required credentials are missing in debug builds.
     pub async fn get() -> Result<Self> {
-        if cfg!(debug_assertions) {
-            let manifest_dir =
-                std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-            let config_path = std::path::Path::new(&manifest_dir).join("dev-server.json");
-            if !config_path.exists() {
-                let default_config: DatabaseConnectionData = DatabaseConnectionData::default();
-                let json = serde_json::to_string(&default_config);
-                if let Ok(json) = json {
-                    std::fs::write("dev-server.json", json)?;
-                }
-                return Err(anyhow::anyhow!("Configuration file not found"));
-            }
-            let config_json = std::fs::read_to_string(config_path)?;
-            let dev_config: DatabaseConnectionData = serde_json::from_str(&config_json)?;
-            Ok(dev_config)
+        let mut config = if cfg!(debug_assertions) {
+            DatabaseConnectionData::default()
         } else {
-            use reqwest::Client;
-            // Remote configuration endpoint
-            let url = "https://lib.mardens.com/config.json";
-            let client = Client::builder()
-                .danger_accept_invalid_certs(true)
-                .build()?;
-            let response = client.get(url).send().await?;
-            let credentials = response.json::<DatabaseConnectionData>().await?;
-            Ok(credentials)
+            fetch_remote_config().await?
+        };
+
+        apply_env_overrides(&mut config)?;
+
+        if cfg!(debug_assertions) {
+            validate_debug_config(&config)?;
         }
+
+        Ok(config)
     }
-    /// Asynchronously retrieves a connection pool for the MySQL database.
+
+    /// Returns a MySQL connection pool built from this configuration.
     ///
-    /// # Returns
-    /// - `Result<MySqlPool>`: A result containing the `MySqlPool` if successful, or an error if the operation fails.
-    ///
-    /// # Errors
-    /// This function returns an error if the connection pool creation fails.
-    ///
-    /// # Examples
-    /// ```rust
-    /// let pool = my_instance.get_pool().await?;
-    /// ```
-    ///
-    /// # Note
-    /// This function relies on the `create_pool` function, which is expected to handle
-    /// connection pool initialization logic asynchronously.
+    /// Convenience wrapper around [`create_pool`].
     pub async fn get_pool(&self) -> Result<MySqlPool> {
         create_pool(self).await
     }
 }
 
-/// Creates a MySQL connection pool using the provided configuration
+/// Fetches the remote production configuration JSON.
+async fn fetch_remote_config() -> Result<DatabaseConnectionData> {
+    use reqwest::Client;
+    let client = Client::builder().danger_accept_invalid_certs(true).build()?;
+    let response = client.get(REMOTE_CONFIG_URL).send().await?;
+    let credentials = response.json::<DatabaseConnectionData>().await?;
+    Ok(credentials)
+}
+
+/// Overlays any set environment variables onto `config`.
 ///
-/// # Arguments
-/// * `data` - Database connection configuration
+/// Only fields whose env var is present are modified. Returns an error if
+/// `DB_PORT` is set but not a valid `u16`.
+fn apply_env_overrides(config: &mut DatabaseConnectionData) -> Result<()> {
+    if let Ok(v) = std::env::var(ENV_HOST) {
+        config.host = v;
+    }
+    if let Ok(v) = std::env::var(ENV_USER) {
+        config.user = v;
+    }
+    if let Ok(v) = std::env::var(ENV_PASSWORD) {
+        config.password = v;
+    }
+    if let Ok(v) = std::env::var(ENV_HASH) {
+        config.hash = v;
+    }
+    if let Ok(v) = std::env::var(ENV_FM_USER) {
+        config.filemaker.username = v;
+    }
+    if let Ok(v) = std::env::var(ENV_FM_PASSWORD) {
+        config.filemaker.password = v;
+    }
+    if let Ok(v) = std::env::var(ENV_PORT) {
+        let port: u16 = v
+            .parse()
+            .map_err(|e| anyhow!("{ENV_PORT} must be a valid u16 (got {v:?}): {e}"))?;
+        config.port = Some(port);
+    }
+    Ok(())
+}
+
+/// Ensures required MySQL credentials are present in debug builds.
+fn validate_debug_config(config: &DatabaseConnectionData) -> Result<()> {
+    let mut missing = Vec::new();
+    if config.host.is_empty() {
+        missing.push(ENV_HOST);
+    }
+    if config.user.is_empty() {
+        missing.push(ENV_USER);
+    }
+    if config.password.is_empty() {
+        missing.push(ENV_PASSWORD);
+    }
+    if !missing.is_empty() {
+        return Err(anyhow!(
+            "Missing required database env var(s) in debug build: {}. \
+             Set them before running (e.g. DB_HOST, DB_USER, DB_PASSWORD).",
+            missing.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// Creates a MySQL connection pool from `data`.
 ///
-/// # Returns
-/// * `Result<MySqlPool>` - MySQL connection pool if successful, error otherwise
+/// The global database name (set via [`set_database_name`]) is used as the
+/// target database. Port defaults to MySQL's 3306 when `data.port` is `None`.
 ///
 /// # Errors
-/// * When connection to MySQL fails
+/// * The database name has not been set.
+/// * Connection to MySQL fails.
 pub async fn create_pool(data: &DatabaseConnectionData) -> Result<MySqlPool> {
-    debug!("Creating MySQL production connection");
+    debug!("Creating MySQL connection pool");
     let db = get_database_name()?;
     let mut options = MySqlConnectOptions::new()
         .log_statements(log::LevelFilter::Trace)
@@ -116,71 +184,39 @@ pub async fn create_pool(data: &DatabaseConnectionData) -> Result<MySqlPool> {
         options = options.port(port);
     }
 
-    // Construct MySQL connection string and establish connection
     let pool = MySqlPoolOptions::new().connect_with(options).await?;
     Ok(pool)
 }
 
-/// Sets the global database name to the provided string.
+/// Sets the global database name.
 ///
-/// This function initializes a shared, thread-safe global variable (`DATABASE_NAME`)
-/// with the name of the database.
-/// If the database name has already been set and the method is called again,
-/// it will return an error.
-///
-/// # Arguments
-///
-/// * `db` - A string slice representing the new database name to be set globally.
-///
-/// # Returns
-///
-/// * `Ok(())` - If the database name is successfully set.
-/// * `Err(anyhow::Error)` - If there is an attempt to set the database name more than once,
-///   or if the operation fails for any other reason.
-///
-/// # Example
-///
-/// ```norust
-/// set_database_name("my_database").expect("Failed to set database name");
-/// ```
+/// Must be called once before [`create_pool`] or [`DatabaseConnectionData::get_pool`].
+/// Subsequent calls return an error — the name cannot be changed after it is set.
 pub fn set_database_name(db: &str) -> Result<()> {
     DATABASE_NAME
-        .set(Mutex::new(db.to_string()))
-        .map_err(|_| anyhow::anyhow!("Failed to set database name"))?;
-    Ok(())
+        .set(db.to_string())
+        .map_err(|_| anyhow!("Database name has already been set"))
 }
-/// Retrieves the name of the database.
+
+/// Sets the global database name from the `DB_NAME` environment variable.
 ///
-/// This function attempts to retrieve the global database name stored in `DATABASE_NAME`.
-/// It ensures that the name has been initialized and can be accessed safely.
-/// The name is guarded by a lock to handle potential concurrent access.
-///
-/// # Returns
-///
-/// * `Ok(String)` - The name of the database as a string if it is successfully retrieved.
-/// * `Err(anyhow::Error)` - If the database name is not set, or if there is an error
-///   acquiring the lock.
+/// Returns an error if `DB_NAME` is unset or if the name has already been set.
+pub fn set_database_name_from_env() -> Result<()> {
+    let name = std::env::var(ENV_DB_NAME)
+        .map_err(|_| anyhow!("{ENV_DB_NAME} is not set"))?;
+    set_database_name(&name)
+}
+
+/// Returns the global database name previously set via [`set_database_name`].
 ///
 /// # Errors
-///
-/// - Returns an error if:
-///   1. The `DATABASE_NAME` has not been initialized and is `None`.
-///   2. The mutex guarding the database name fails to acquire the lock.
-///
-/// # Example
-///
-/// ```norust
-/// match get_database_name() {
-///     Ok(name) => println!("Database name: {}", name),
-///     Err(e) => eprintln!("Error retrieving database name: {}", e),
-/// }
-/// ```
+/// Returns an error if the database name has not yet been set.
 pub fn get_database_name() -> Result<String> {
-    let name = DATABASE_NAME
+    DATABASE_NAME
         .get()
-        .ok_or_else(|| anyhow::anyhow!("Database name not set"))?;
-    let guard = name
-        .lock()
-        .map_err(|e| anyhow::anyhow!("Failed to acquire lock: {}", e))?;
-    Ok(guard.to_string())
+        .cloned()
+        .ok_or_else(|| {
+            warn!("Database name requested before being set");
+            anyhow!("Database name has not been set; call set_database_name first")
+        })
 }

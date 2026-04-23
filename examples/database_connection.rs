@@ -52,7 +52,12 @@ async fn health_check(db_pool: web::Data<MySqlPool>) -> impl Responder {
 async fn main() -> Result<()> {
     // This sets the database name used for the connection.
     set_database_name("pricing")?;
-    // Load database configuration from remote JSON endpoint
+    // Load database configuration.
+    //
+    // Debug builds require the env vars DB_HOST, DB_USER, DB_PASSWORD to be
+    // set (DB_PORT, DB_HASH, DB_FILEMAKER_USER, DB_FILEMAKER_PASSWORD are
+    // optional). Release builds fetch from the remote config endpoint and
+    // allow the same env vars to override individual fields.
     let db_config = DatabaseConnectionData::get().await?;
 
     // Create a MySQL connection pool

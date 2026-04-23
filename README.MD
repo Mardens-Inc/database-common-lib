@@ -5,7 +5,7 @@ A Rust library providing common utilities for database connections and web serve
 ## Features
 
 ### Database Connection Management
-- Secure database configuration loading from remote JSON endpoints
+- Environment-variable-driven database configuration with remote JSON fallback in release builds
 - MySQL connection pool creation and management
 - Support for both MySQL and Filemaker database credentials
 - Automatic handling of SSL certificate validation
@@ -27,10 +27,13 @@ A Rust library providing common utilities for database connections and web serve
 ### Database Connection Setup
 
 ```rust
-use database_common_lib::database_connection::{DatabaseConnectionData, create_pool};
+use database_common_lib::database_connection::{DatabaseConnectionData, create_pool, set_database_name};
 
 async fn setup_database() -> anyhow::Result<()> {
-  // Fetch database configuration
+  // Required once per process.
+  set_database_name("my_database")?;
+
+  // Load configuration. See "Configuration" below for env vars.
   let config = DatabaseConnectionData::get().await?;
 
   // Create MySQL connection pool
@@ -39,6 +42,32 @@ async fn setup_database() -> anyhow::Result<()> {
   Ok(())
 }
 ```
+
+### Configuration
+
+`DatabaseConnectionData::get()` reads configuration in two phases:
+
+1. **Base config**
+   - Debug builds start from an empty default; env vars are required.
+   - Release builds fetch `https://lib.mardens.com/config.json`.
+2. **Environment overrides** — any of these env vars, if set, replace the
+   corresponding field:
+
+| Env var                  | Field                |
+|--------------------------|----------------------|
+| `DB_HOST`                | `host`               |
+| `DB_USER`                | `user`               |
+| `DB_PASSWORD`            | `password`           |
+| `DB_PORT`                | `port` (u16)         |
+| `DB_HASH`                | `hash`               |
+| `DB_FILEMAKER_USER`      | `filemaker.username` |
+| `DB_FILEMAKER_PASSWORD`  | `filemaker.password` |
+
+`DB_NAME` is additionally supported via `set_database_name_from_env()` for
+callers that prefer env-driven database selection over `set_database_name(&str)`.
+
+In debug builds, `DB_HOST`, `DB_USER`, and `DB_PASSWORD` are required — the
+call will fail with a clear error if any are missing.
 
 ### Web Server Configuration
 
